@@ -1,0 +1,560 @@
+
+---
+title: "Descriptive and Visual Analysis of Credit Card Customer Data"
+author: |
+  **Student 1:** Alavath Ruthik  
+  Roll No: 34 | Reg No: 12321995 | Group 1  
+  **Student 2:** Hirak Roy  
+  Roll No: 26 | Reg No: 12301094 | Group 1
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+    number_sections: true
+  pdf_document:
+    latex_engine: xelatex
+  word_document: default
+fontsize: 12pt
+mainfont: "Times New Roman"
+geometry: margin=1in
+---
+
+# Introduction
+
+In this project, we analyze a Credit Card Customer Dataset containing customer details such as age, income, card type, credit limit, payment ratio, current balance, utilization rate, and monthly spending across different categories. The dataset also includes essential (“Needs”) and non-essential (“Wants/Lifestyle”) spend categories, allowing deeper behavioral segmentation.
+
+Using R programming for data cleaning, transformation, and visualization, the project aims to identify hidden patterns in how customers spend and repay their credit card dues. The analysis helps classify customers into various groups such as high spenders, low-risk users, lifestyle-driven users, and potential defaulters. Spending categories, repayment behavior, age groups, and credit utilization are explored to understand how different customer segments exhibit distinct financial habits.This study not only highlights the financial behavior of customers but also supports decision-making for credit risk assessment. By analyzing spending patterns and repayment discipline, the project offers insights that can help financial institutions reduce default risk, understand customer needs, and improve credit product strategies.
+
+
+# Data Cleaning and Preprocessing
+
+```{r data-cleaning, message=FALSE, warning=FALSE}
+
+# Load all required libraries
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(psych)
+library(scales)   # for comma formatting
+library(corrplot)
+library(readxl)
+library(stringr)
+
+# ----------------------------
+# 1. LOAD THE DATASET
+# ----------------------------
+credit_data <- read_excel("C:/Users/alava/Downloads/credit_card_dataset_no_spareparts.xlsx")
+
+# View structure & summary
+str(credit_data)
+summary(credit_data)
+
+
+# ----------------------------
+# 2. CLEAN COLUMN NAMES
+# ----------------------------
+credit_data <- credit_data %>%
+  rename_all(~ str_replace_all(., " ", "_")) %>%    # replace spaces
+  rename_all(~ str_replace_all(., "\\/", "_")) %>%  # replace slashes
+  rename_all(tolower)                               # lowercase names
+
+# ----------------------------
+# 3. HANDLE MISSING VALUES
+# ----------------------------
+
+# Count missing values
+colSums(is.na(credit_data))
+
+# Fill NA in numeric columns with median
+numeric_cols <- sapply(credit_data, is.numeric)
+credit_data[numeric_cols] <- lapply(credit_data[numeric_cols], function(x){
+  replace(x, is.na(x), median(x, na.rm = TRUE))
+})
+
+# Fill NA in character columns with "Unknown"
+cat_cols <- sapply(credit_data, is.character)
+credit_data[cat_cols] <- lapply(credit_data[cat_cols], function(x){
+  replace(x, is.na(x), "Unknown")
+})
+
+
+
+# ----------------------------
+# 4. CREATE AGE CATEGORIES
+# ----------------------------
+credit_data <- credit_data %>%
+  mutate(
+    age_category = case_when(
+      age >= 25 & age <= 35 ~ "25-35",
+      age >= 36 & age <= 55 ~ "36-55",
+      age >= 56 & age <= 75 ~ "56-75",
+      TRUE ~ "Other"
+    )
+  )
+
+# ----------------------------
+# 5. CREATE UTILIZATION RATE
+# ----------------------------
+# If columns exist: current_balance, credit_limit
+credit_data <- credit_data %>%
+  mutate(utilization_rate = current_balance / credit_limit)
+
+
+# ----------------------------
+# 6. CREATE NEEDS & WANTS SPENDING (Corrected)
+# ----------------------------
+
+# NEEDS = essential expenses
+credit_data <- credit_data %>%
+  mutate(
+    needs_spend = grocery_spend +
+                   utilities_spend +
+                   bill_payments +
+                   fuel_spend +
+                   medical_spend
+  )
+
+# WANTS = lifestyle expenses
+credit_data <- credit_data %>%
+  mutate(
+    wants_spend = shopping_spend +
+                  dining_spend +
+                  travel_spend +
+                  entertainment_spend +
+                  clothes_spend +
+                  online_spend
+  )
+
+
+# ----------------------------
+# 7. CREATE PAYMENT CATEGORY
+# ----------------------------
+credit_data <- credit_data %>%
+  mutate(
+    payment_category = case_when(
+      payment_ratio < 0.30 ~ "Low Payer",
+      payment_ratio >= 0.30 & payment_ratio < 0.70 ~ "Partial Payer",
+      payment_ratio >= 0.70 ~ "Good Payer",
+      TRUE ~ "Unknown"
+    )
+  )
+
+# ----------------------------
+# 8. FINAL CLEANED DATASET
+# ----------------------------
+glimpse(credit_data)
+head(credit_data)
+
+```
+
+
+
+## Monthly Spend Analysis
+
+#**Q: What is the typical monthly spending behavior of credit card customers, and are there extreme spending outliers?**
+
+```{r improved-histogram, message=FALSE, warning=FALSE}
+library(scales)
+
+ggplot(credit_data, aes(x = monthly_spend)) +
+  geom_histogram(    #geometric object
+    bins = 30, 
+    fill = "#0073C2FF",
+    color = "black",
+    alpha = 0.8
+  ) +
+  stat_bin(
+    bins = 30,
+    geom = "text",
+    aes(label = ..count..),
+    vjust = -0.5,
+    size = 3
+  ) +
+  scale_x_continuous(
+    labels = comma  # 50,000 instead of 5e+04
+  ) +
+  labs(
+    title = "Distribution of Monthly Spend",
+    x = "Monthly Spend (Rs)",
+    y = "Number of Customers"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+ Most customers spend **between ₹50,000 and ₹1,00,000** each month.  
+- The highest spending cluster is ₹75,000–₹85,000, with the largest bar.  
+- Very low spenders (< ₹30,000) and very high spenders (> ₹1,20,000) are rare.  
+- The shape is roughly bell-shaped, meaning spending is stable across customers.  
+- Only a few outliers exist on both ends of the range.
+
+# Utilization Rate vs Payment Ratio
+
+#**Q: How does a customer’s credit utilization rate affect their payment behavior?  **
+ 
+```{r util-vs-pay, message=FALSE, warning=FALSE}
+ggplot(credit_data, aes(x = utilization_rate, 
+                        y = payment_ratio, 
+                        color = age_category)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Utilization Rate vs Payment Ratio",
+    x = "Utilization Rate (Percentage of Credit Limit Used)",
+    y = "Payment Ratio (Percentage of Bill Paid)",
+    color = "Age Category"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+- **Bottom-right points** (high utilization, low payment ratio)  
+  → These are high-risk customers.  
+  They use a lot of credit but pay back very little.
+
+- **Top-left points** (low utilization, high payment ratio)  
+  → These are low-risk customers who spend responsibly and pay fully.
+
+- **Middle cluster**  
+  → Most customers fall in a moderate zone (40–70% utilization and 40–70% payment ratio).
+
+- **Age Insight**  
+  Colors show age groups.  
+  If younger customers cluster at high utilization, they may show aggressive spending.
+
+
+# Credit Limit vs Monthly Spend
+
+#**Q: Among the top 100 highest-spending customers, how does credit limit influence monthly spending? Do customers with** higher limits spend more?
+
+```{r top100-spend, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Select Top 100 Customers by Monthly Spend
+top100 <- credit_data %>%
+  arrange(desc(monthly_spend)) %>%
+  slice(1:100)
+
+ggplot(top100, aes(x = credit_limit, y = monthly_spend, color = age_category)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", size = 1.2) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Credit Limit vs Monthly Spend (Top 100 Customers)",
+    x = "Credit Limit (Rs)",
+    y = "Monthly Spend (Rs)",
+    color = "Age Category"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+The plot shows the relationship between credit limits and monthly spending for the top 100 highest-spending customers.
+
+- Customers with higher credit limits generally spend more.
+- A visible upward trend indicates that credit limit strongly influences customer spending.
+- Some customers have high limits but low spend, showing under-utilization.
+- A few customers spend aggressively despite lower limits, indicating potential risk.
+
+# Needs vs Wants Spending Analysis
+
+#**Q: Do customers spend more on essential needs or lifestyle wants?**
+
+```{r needs-wants-bar, message=FALSE, warning=FALSE}
+
+
+# Calculate average spending
+avg_spend <- credit_data %>%
+  summarise(
+    avg_needs = mean(needs_spend),
+    avg_wants = mean(wants_spend)
+  ) %>%
+  pivot_longer(cols = everything(), names_to = "category", values_to = "average_spend")
+
+# Bar chart
+ggplot(avg_spend, aes(x = category, y = average_spend, fill = category)) +
+  geom_col(width = 0.6) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Average Needs vs Wants Spending",
+    x = "Category",
+    y = "Average Spend (Rs)"
+  ) +
+  theme_minimal(base_size = 14) +
+  scale_fill_manual(values = c("avg_needs" = "#1f77b4", "avg_wants" = "#ff7f0e"))
+```
+The bar chart shows that customers spend significantly more on wants than on essential needs.
+
+Average Wants Spend (~₹82,000) is more than double the
+Average Needs Spend (~₹39,000).
+
+This indicates that customer spending is lifestyle-driven, with a larger portion going toward shopping, dining, travel, entertainment, and online purchases.
+
+The pattern suggests higher discretionary behaviour, which may increase financial risk if payment discipline is low.
+
+
+
+# Default Risk Analysis
+
+#**Q: How does utilization differ between defaulters and non-defaulters?**
+
+```{r default-risk, message=FALSE, warning=FALSE}
+
+# ---- 1. Fix utilization_rate (replace Inf/NA) ----
+credit_data <- credit_data %>%
+  mutate(
+    utilization_rate = ifelse(
+      is.infinite(utilization_rate) | is.na(utilization_rate),
+      NA,
+      utilization_rate
+    )
+  )
+
+# ---- 2. Clean defaulted column ----
+credit_data <- credit_data %>%
+  mutate(
+    defaulted = case_when(
+      defaulted %in% c(1, "1", "yes", "Yes", "Y") ~ 1,
+      defaulted %in% c(0, "0", "no", "No", "N") ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+# ---- 3. Filter valid rows ----
+plot_df <- credit_data %>%
+  filter(!is.na(utilization_rate), !is.na(defaulted))
+
+# ---- 4. Boxplot ----
+ggplot(plot_df, aes(x = factor(defaulted), y = utilization_rate, fill = factor(defaulted))) +
+  geom_boxplot(alpha = 0.7) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Utilization Rate vs Default Status",
+    x = "Defaulted (0 = No, 1 = Yes)",
+    y = "Utilization Rate",
+    fill = "Defaulted"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+The boxplot shows a clear difference in utilization behaviour between defaulters and non-defaulters:
+
+Defaulters (1) have very high utilization rates, mostly between 75% and 90%, meaning they consistently use a large portion of their credit limit.
+
+Non-defaulters (0) show much lower and more varied utilization, mostly between 25% and 60%.
+
+The median utilization of defaulters is far higher, indicating a strong link between high credit usage and default risk.
+
+# Correlation Scatter Plot (Top 100 Customers)
+
+#** the correlation of the age income credit limist**
+
+```{r correlation-heatmap, message=FALSE, warning=FALSE}
+library(corrplot)
+
+numeric_cols <- credit_data %>%
+  select(age, income, credit_limit, current_balance, monthly_spend,
+         needs_spend, wants_spend, utilization_rate, payment_ratio)
+
+corr_matrix <- cor(numeric_cols)
+
+corrplot(corr_matrix,
+         method = "color",
+         type = "upper",
+         addCoef.col = "black",
+         tl.col = "black",
+         number.cex = 0.6,
+         title = "Correlation Heatmap of Financial Variables",
+         mar = c(0,0,2,0))
+```
+
+# Simple Linear Regression Analysis
+
+
+### Q: Does a higher credit limit lead to higher monthly spending among customers?
+```{r simple-regression, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(scales)
+
+# ---- 1. Simple Linear Regression Model ----
+model <- lm(monthly_spend ~ credit_limit, data = credit_data)
+
+# ---- 2. Print Summary ----
+summary(model)
+
+# ---- 3. Regression Plot ----
+ggplot(credit_data, aes(x = credit_limit, y = monthly_spend)) +
+  geom_point(color = "#0073C2FF", alpha = 0.7) +
+  geom_smooth(method = "lm", color = "red", se = TRUE, size = 1.2) +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Simple Linear Regression: Credit Limit vs Monthly Spend",
+    x = "Credit Limit (INR)",
+    y = "Monthly Spend (INR)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+The regression plot shows a positive relationship between credit limit and monthly spending:
+
+As the credit limit increases, customers tend to spend more on average.
+
+The red regression line slopes upward, indicating that
+credit limit is a significant predictor of monthly spend.
+
+The shaded grey area shows the confidence interval, meaning we are reasonably confident about the trend.
+
+Although the points are somewhat spread out, the trend remains clear:
+Higher-limit customers generally show higher spending ability.
+
+Some customers with high limits still spend less → indicates conservative spenders.
+
+
+## ANOVA: Monthly Spending Across Age Groups
+
+```{r anova-age-groups, message=FALSE, warning=FALSE}
+
+# Convert age category into a factor
+credit_data$age_category <- factor(credit_data$age_category)
+
+# 1. Check group sizes
+table(credit_data$age_category)
+
+# 2. One-way ANOVA
+anova_model <- aov(monthly_spend ~ age_category, data = credit_data)
+summary(anova_model)
+
+# 3. Check ANOVA Assumptions
+
+## (a) Normality of residuals
+shapiro.test(residuals(anova_model))
+
+## (b) Homogeneity of variance
+library(car)
+leveneTest(monthly_spend ~ age_category, data = credit_data)
+
+# 4. Post-hoc test (Tukey HSD)
+TukeyHSD(anova_model)
+
+# 5. Visualization
+library(ggplot2)
+library(scales)
+
+ggplot(credit_data, aes(x = age_category, y = monthly_spend, fill = age_category)) +
+  geom_boxplot(alpha = 0.8) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Monthly Spending Across Age Groups",
+    x = "Age Group",
+    y = "Monthly Spend (Rs)",
+    fill = "Age Group"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+
+## KNN Classification: Predicting Default Risk
+
+```{r knn-classification, message=FALSE, warning=FALSE}
+
+# ----------------------------------------------------------
+# KNN Classification: Predicting whether a customer defaults
+# ----------------------------------------------------------
+
+library(class)
+library(ggplot2)
+library(dplyr)
+
+# Ensure defaulted is numeric/factor
+credit_data <- credit_data %>%
+  mutate(
+    defaulted = case_when(
+      defaulted %in% c(1, "1", "yes", "Yes", "Y") ~ 1,
+      defaulted %in% c(0, "0", "no", "No", "N") ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+# Remove missing default values
+knn_data <- credit_data %>%
+  select(defaulted, monthly_spend, credit_limit,
+         utilization_rate, payment_ratio, income, current_balance) %>%
+  filter(!is.na(defaulted))
+
+# Convert defaulted to factor
+knn_data$defaulted <- factor(knn_data$defaulted)
+
+# Normalize numeric predictors
+normalize <- function(x) (x - min(x)) / (max(x) - min(x))
+
+knn_norm <- knn_data %>%
+  mutate(across(-defaulted, ~ normalize(.x)))
+
+# Train-test split (80/20)
+set.seed(123)
+n <- nrow(knn_norm)
+train_idx <- sample(1:n, size = 0.8*n)
+
+train <- knn_norm[train_idx, ]
+test  <- knn_norm[-train_idx, ]
+
+train_x <- train %>% select(-defaulted)
+test_x  <- test %>% select(-defaulted)
+train_y <- train$defaulted
+test_y  <- test$defaulted
+
+# Run KNN (k = 5)
+knn_pred <- knn(train = train_x, 
+                test = test_x,
+                cl = train_y,
+                k = 5)
+
+# Confusion Matrix
+conf_matrix <- table(Predicted = knn_pred, Actual = test_y)
+conf_matrix
+
+# Accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+accuracy
+
+# ----------------------------------------------------------
+# Visualization: Plotting KNN predictions
+# Using the two strongest predictors for plotting:
+# credit_limit (x-axis) vs monthly_spend (y-axis)
+# ----------------------------------------------------------
+
+plot_df <- test %>%
+  mutate(predicted = knn_pred)
+
+ggplot(plot_df, aes(x = credit_limit, y = monthly_spend, color = predicted)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "KNN Classification Results (k = 5)",
+    x = "Credit Limit (Normalized)",
+    y = "Monthly Spend (Normalized)",
+    color = "Predicted\nDefault"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+# Conclusion
+This project provided a comprehensive descriptive and visual analysis of credit card customer behavior using a dataset of 1,000 individuals. Through systematic data cleaning, feature engineering, and visualization in R, we uncovered several important patterns in spending behavior, credit usage, and repayment discipline.
+
+The analysis revealed that most customers maintain moderate monthly spending, typically between ₹50,000 and ₹1,00,000, with only a few extreme outliers. Spending behavior is strongly lifestyle-driven, as customers consistently allocate more money toward non-essential “wants” such as shopping, entertainment, and travel compared to essential needs.
+
+When examining financial discipline, we observed clear relationships between credit utilization, payment ratios, and age groups. Customers who maintain low utilization and high payment ratios appear financially responsible, whereas those with high utilization and low repayment ratios potentially indicate risky financial habits. Age also plays a role, with some younger customers showing more aggressive spending patterns.
+
+The analysis of credit limit and spending among the top 100 customers highlighted a positive correlation—higher credit limits often encourage higher spending. However, a subset of customers underutilizes their available credit, showing more conservative financial behavior.
+
+Finally, the default risk analysis clearly demonstrated that defaulters exhibit significantly higher credit utilization rates (typically 75–90%) compared to non-defaulters (25–60%). This strong separation confirms that credit utilization is one of the most powerful indicators of default risk.
+
+Overall, the project successfully identified key behavioral insights that can support financial institutions in designing better credit policies, improving customer segmentation, reducing default rates, and tailoring products to customer needs. The findings highlight the importance of monitoring utilization patterns, encouraging healthy repayment behavior, and understanding customer lifestyle preferences to ensure sustainable credit management.
