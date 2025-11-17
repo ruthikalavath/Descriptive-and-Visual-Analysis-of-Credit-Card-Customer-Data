@@ -1,0 +1,2 @@
+# Descriptive-and-Visual-Analysis-of-Credit-Card-Customer-Data
+This project presents a comprehensive descriptive and visual analysis of credit card customer behavior, with a focus on spending patterns, financial discipline, credit utilization, and default risk. The primary objective is to understand how different customer attributes—such as age, income, credit limits, card types, utilization rate, payment rati
